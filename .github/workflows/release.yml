@@ -1,0 +1,83 @@
+name: Package and Release DQQK Resources
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release-resources:
+    name: Package and Publish Resources Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Tag and Version
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "TAG=${TAG}" >> $GITHUB_OUTPUT
+          echo "Processing resources for tag ${TAG}"
+
+      - name: Create Release Package (resources.zip)
+        run: |
+          mkdir -p dist
+          # Archive repository assets excluding git, workflows, and ignored files
+          zip -r dist/resources.zip . \
+            -x "*.git*" \
+            -x "*.github*" \
+            -x "apt/*" \
+            -x "ocr/*" \
+            -x "*.dll" \
+            -x "scrcpy-server" \
+            -x "Settings.ini" \
+            -x "dist/*"
+          echo "Created dist/resources.zip"
+
+      - name: Enrich manifest.json with release_date and notes
+        run: |
+          RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          
+          # Extract release notes if available, otherwise fallback to tag annotation
+          NOTES=$(git tag -l --format='%(contents)' "${{ steps.vars.outputs.TAG }}" | head -n 20)
+          if [ -z "$NOTES" ]; then
+            NOTES="Bản phát hành tài nguyên ${{ steps.vars.outputs.TAG }}"
+          fi
+
+          # Read repo manifest.json and inject release_date & notes
+          jq --arg date "$RELEASE_DATE" --arg notes "$NOTES" \
+            '. + {release_date: $date, notes: $notes}' manifest.json > dist/manifest.json
+
+          echo "Enriched manifest.json:"
+          cat dist/manifest.json
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.TAG }}
+          name: "Resources ${{ steps.vars.outputs.TAG }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/resources.zip
+            dist/manifest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
