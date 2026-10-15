@@ -32,13 +32,38 @@ jobs:
           else
             TAG="${GITHUB_REF_NAME}"
           fi
+          # Loại bỏ tiền tố 'v' để lấy semver thuần (vd: 1.0.0)
+          VERSION="${TAG#v}"
           echo "TAG=${TAG}" >> $GITHUB_OUTPUT
-          echo "Processing resources for tag ${TAG}"
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Processing resources for tag ${TAG} (Version: ${VERSION})"
+
+      - name: Enrich manifest.json with version, release_date and notes
+        run: |
+          RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          VERSION="${{ steps.vars.outputs.VERSION }}"
+          
+          # Lấy release note từ tag message hoặc fallback
+          NOTES=$(git tag -l --format='%(contents)' "${{ steps.vars.outputs.TAG }}" | head -n 20)
+          if [ -z "$NOTES" ]; then
+            NOTES="Bản phát hành tài nguyên ${{ steps.vars.outputs.TAG }}"
+          fi
+
+          # Tự động chèn/thay thế version, release_date và notes vào manifest.json
+          jq --arg ver "$VERSION" --arg date "$RELEASE_DATE" --arg notes "$NOTES" \
+            '. + {version: $ver, release_date: $date, notes: $notes}' manifest.json > manifest_enriched.json
+          mv manifest_enriched.json manifest.json
+
+          echo "Final manifest.json:"
+          cat manifest.json
 
       - name: Create Release Package (resources.zip)
         run: |
           mkdir -p dist
-          # Archive repository assets excluding git, workflows, and ignored files
+          # Copy manifest.json ra dist để upload làm asset độc lập
+          cp manifest.json dist/manifest.json
+
+          # Đóng gói resources.zip (đã bao gồm manifest.json hoàn chỉnh bên trong)
           zip -r dist/resources.zip . \
             -x "*.git*" \
             -x "*.github*" \
@@ -47,25 +72,9 @@ jobs:
             -x "*.dll" \
             -x "scrcpy-server" \
             -x "Settings.ini" \
+            -x "version.json" \
             -x "dist/*"
           echo "Created dist/resources.zip"
-
-      - name: Enrich manifest.json with release_date and notes
-        run: |
-          RELEASE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          
-          # Extract release notes if available, otherwise fallback to tag annotation
-          NOTES=$(git tag -l --format='%(contents)' "${{ steps.vars.outputs.TAG }}" | head -n 20)
-          if [ -z "$NOTES" ]; then
-            NOTES="Bản phát hành tài nguyên ${{ steps.vars.outputs.TAG }}"
-          fi
-
-          # Read repo manifest.json and inject release_date & notes
-          jq --arg date "$RELEASE_DATE" --arg notes "$NOTES" \
-            '. + {release_date: $date, notes: $notes}' manifest.json > dist/manifest.json
-
-          echo "Enriched manifest.json:"
-          cat dist/manifest.json
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -80,4 +89,3 @@ jobs:
             dist/manifest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
