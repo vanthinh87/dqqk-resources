@@ -74,7 +74,7 @@ jobs:
           tag_name: ${{ steps.vars.outputs.TAG }}
           name: "Resources ${{ steps.vars.outputs.TAG }}"
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(steps.vars.outputs.TAG, '-') }}
           generate_release_notes: true
           files: |
             dist/resources.zip
